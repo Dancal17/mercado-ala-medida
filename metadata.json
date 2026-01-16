@@ -1,0 +1,7 @@
+{
+  "name": "Mercados - a la medida",
+  "description": "Una plataforma de Meal Kits (ingredientes crudos) para Bogotá que desglosa recetas típicas en listas de picking exactas usando IA, con precios de Corabastos 2025 y cumplimiento nutricional ICBF.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}
