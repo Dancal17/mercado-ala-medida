@@ -10,8 +10,10 @@ export enum Category {
 export interface Ingredient {
   id: string;
   name: string;
-  unit: 'g' | 'ml' | 'und';
+  unit: string;
   pricePerUnit: number; // Price per g, ml or unit
+  cost?: number;         // costo de compra (opcional para administrador)
+  supplierCode?: string; // Código de proveedor (SKU)
   isProtein?: boolean;
   isCarb?: boolean;
   isLegume?: boolean;

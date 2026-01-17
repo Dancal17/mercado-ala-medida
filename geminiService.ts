@@ -1,5 +1,4 @@
-
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import { CartItem, PickingItem, Ingredient, Recipe, PersonConfig, AgeRange } from "./types";
 
 const getApiKey = () => {
@@ -7,13 +6,13 @@ const getApiKey = () => {
 };
 
 const apiKey = getApiKey();
-let ai: GoogleGenAI | null = null;
+let ai: GoogleGenerativeAI | null = null;
 
 if (apiKey && apiKey !== 'PLACEHOLDER_API_KEY') {
   try {
-    ai = new GoogleGenAI(apiKey);
+    ai = new GoogleGenerativeAI(apiKey);
   } catch (e) {
-    console.warn("Error al inicializar GoogleGenAI:", e);
+    console.warn("Error al inicializar GoogleGenerativeAI:", e);
   }
 }
 
@@ -101,5 +100,112 @@ export async function optimizePickingList(
     return { picking: pickingList, suggestions };
   } catch (error) {
     return { picking: pickingList, suggestions: ["Ajusta las proteínas según el crecimiento de los menores.", "Usa recipientes medidores para las porciones infantiles."] };
+  }
+}
+
+export async function auditCatalog(ingredients: Ingredient[]): Promise<{
+  missingPrices: string[];
+  suggestedCodes: Record<string, string>;
+  optimizationTips: string[];
+}> {
+  if (!ai) {
+    return {
+      missingPrices: ingredients.filter(i => (i.cost || 0) <= 0).map(i => i.name),
+      suggestedCodes: {},
+      optimizationTips: ["Conecta la IA para generar códigos automáticos."]
+    };
+  }
+
+  const missingPrices = ingredients.filter(i => (i.cost || 0) <= 0).map(i => i.name);
+
+  // Solo auditamos ingredientes sin código de proveedor para ahorrar tokens
+  const ingredientsToCode = ingredients.filter(i => !i.supplierCode).slice(0, 20); // Límite por batch
+
+  if (ingredientsToCode.length === 0 && missingPrices.length === 0) {
+    return { missingPrices, suggestedCodes: {}, optimizationTips: ["Tu catálogo parece estar en orden."] };
+  }
+
+  try {
+    const prompt = `
+      Actúa como Gerente de Abastecimiento para un e-commerce de alimentos.
+      Analiza esta lista de ingredientes y genera códigos SKU estandarizados (formato CAT-000) y consejos de compra.
+      
+      Ingredientes sin código: ${ingredientsToCode.map(i => i.name).join(', ')}
+      Ingredientes sin precio: ${missingPrices.join(', ')}
+
+      Responde SOLO en formato JSON válido con esta estructura:
+      {
+        "codes": { "NombreIngrediente": "SKU_SUGERIDO" },
+        "tips": ["Consejo 1", "Consejo 2"]
+      }
+    `;
+
+    const model = (ai as any).getGenerativeModel({ model: "gemini-1.5-flash", generationConfig: { responseMimeType: "application/json" } });
+    const result = await model.generateContent(prompt);
+    const text = result.response.text();
+    const data = JSON.parse(text);
+
+    return {
+      missingPrices,
+      suggestedCodes: data.codes || {},
+      optimizationTips: data.tips || []
+    };
+  } catch (error) {
+    console.error("Error en auditoría IA:", error);
+    return {
+      missingPrices,
+      suggestedCodes: {},
+      optimizationTips: ["Error al conectar con el auditor inteligente."]
+    };
+  }
+}
+
+export async function processBulkImport(
+  csvText: string,
+  currentIngredients: Ingredient[]
+): Promise<{ updates: Partial<Ingredient>[], logs: string[] }> {
+  if (!ai) return { updates: [], logs: ["IA no conectada."] };
+
+  try {
+    const prompt = `
+      Actúa como experto en abastecimiento de alimentos.
+      Tengo una lista de ingredientes interna con unidades base (ej: 'g', 'ml', 'und').
+      Tengo un texto CSV de un proveedor con precios y unidades variadas (ej: 'lb', 'kg', 'atado', 'litro').
+
+      TU TAREA:
+      Para cada fila del CSV del proveedor, encuentra el ingrediente interno correspondiente y calcula el 'cost' (precio de compra) normalizado a la unidad interna.
+      
+      Reglas de Conversión:
+      1 lb = 500g (aproximación de mercado local)
+      1 kg = 1000g
+      1 litro = 1000ml
+      
+      CSV PROVEEDOR (Formato: ID, Nombre, CostoNuevo, UnidadNueva):
+      ${csvText}
+
+      CATÁLOGO INTERNO (Formato: ID, UnidadInterna):
+      ${currentIngredients.map(i => `${i.id} (${i.unit})`).join(', ')}
+
+      Responde SOLO JSON:
+      {
+        "updates": [
+          { "id": "id_interno", "cost": 12.5, "supplierCode": "codigo_proveedor_si_hay" }
+        ],
+        "logs": ["Papa Pastusa: Convertido de $2000/lb a $4/g"]
+      }
+    `;
+
+    const model = (ai as any).getGenerativeModel({ model: "gemini-1.5-flash", generationConfig: { responseMimeType: "application/json" } });
+    const result = await model.generateContent(prompt);
+    const text = result.response.text();
+    const data = JSON.parse(text);
+
+    return {
+      updates: data.updates || [],
+      logs: data.logs || []
+    };
+  } catch (error) {
+    console.error("Error en importación masiva:", error);
+    return { updates: [], logs: ["Error al procesar con IA."] };
   }
 }

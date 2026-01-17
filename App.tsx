@@ -1,9 +1,11 @@
-
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { ShoppingCart, ChefHat, Clock, Users, ArrowRight, ArrowLeft, Trash2, Plus, Minus, X, Check, Search, Filter, AlertCircle, Calendar, Star, TrendingUp, Info, Utensils, Home, MapPin, Truck, Award, ShieldCheck, Heart, Leaf, DollarSign, ExternalLink, ChevronDown, ChevronUp, AlertTriangle, Navigation, Edit3, Tag, Baby, User, Scale, List, CheckCircle2, ShoppingBag, PlayCircle, Zap, Sparkles } from 'lucide-react';
+import { GoogleGenerativeAI } from "@google/generative-ai";
+import { initMercadoPago, Wallet } from '@mercadopago/sdk-react';
 import { RECIPES, INGREDIENTS } from './constants';
-import { Category, Recipe, CartItem, PickingItem, PersonConfig, AgeRange, AppetiteIntensity } from './types';
+import { Category, Recipe, CartItem, PickingItem, PersonConfig, AgeRange, AppetiteIntensity, Ingredient } from './types';
 import { optimizePickingList } from './geminiService';
+import AdminPanel from './AdminPanel';
 
 const STEPS = [
   { id: 'config', label: 'Configuración', icon: <Calendar className="w-4 h-4" /> },
@@ -44,8 +46,54 @@ const ANTOJOS_PRODUCTS = [
 ];
 
 const App: React.FC = () => {
+  const [ingredients, setIngredients] = useState<Ingredient[]>(() => {
+    const saved = localStorage.getItem('ingredients');
+    return saved ? JSON.parse(saved) : INGREDIENTS;
+  });
+  const [recipes, setRecipes] = useState<Recipe[]>(() => {
+    const saved = localStorage.getItem('recipes');
+    return saved ? JSON.parse(saved) : RECIPES;
+  });
+
+  // Persistence Effects
+  useEffect(() => {
+    localStorage.setItem('ingredients', JSON.stringify(ingredients));
+  }, [ingredients]);
+
+  useEffect(() => {
+    localStorage.setItem('recipes', JSON.stringify(recipes));
+  }, [recipes]);
+
+  const [isAdmin, setIsAdmin] = useState(false);
+
+
   const [showLanding, setShowLanding] = useState(true);
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
+  // ... rest of state
+
+  // ... handlers
+
+  const handleUpdateRecipe = (id: string, updates: Partial<Recipe>) => {
+    setRecipes(prev => prev.map(r => r.id === id ? { ...r, ...updates } : r));
+  };
+
+  const handleAddRecipe = (newRecipe: Recipe) => {
+    setRecipes(prev => [...prev, newRecipe]);
+  };
+
+  const handleDeleteRecipe = (id: string) => {
+    setRecipes(prev => prev.filter(r => r.id !== id));
+  };
+
+  const handleUpdateIngredient = (id: string, updates: Partial<Ingredient>) => {
+    setIngredients(prev => prev.map(ing =>
+      ing.id === id ? { ...ing, ...updates } : ing
+    ));
+  };
+
+  // ... admin check
+
+
   const [cart, setCart] = useState<CartItem[]>([]);
   const [dayPlan, setDayPlan] = useState<number>(3);
   const [numPeople, setNumPeople] = useState<number>(2);
@@ -109,7 +157,15 @@ const App: React.FC = () => {
 
   const recipesForStep = useMemo(() => {
     if (currentStep.id === 'config') return [];
-    return RECIPES.filter(r => r.category === currentStep.id);
+    return RECIPES.filter(r => {
+      if (r.category !== currentStep.id) return false;
+
+      // Validar si todos los ingredientes tienen precio de venta > 0
+      return r.ingredients.every(ri => {
+        const ingredient = ingredients.find(i => i.id === ri.ingredientId);
+        return (ingredient?.pricePerUnit || 0) > 0;
+      });
+    });
   }, [currentStep]);
 
   const finalPickingList = useMemo(() => {
@@ -145,6 +201,64 @@ const App: React.FC = () => {
 
   const getCategoryCount = (cat: Category) => {
     return cart.filter(i => i.category === cat).reduce((acc, curr) => acc + curr.quantity, 0);
+  };
+
+  // Mercado Pago Integration
+  const [preferenceId, setPreferenceId] = useState<string | null>(null);
+
+  useEffect(() => {
+    initMercadoPago(import.meta.env.VITE_MP_PUBLIC_KEY, { locale: 'es-CO' });
+  }, []);
+
+  const createPreference = async () => {
+    try {
+      setIsProcessing(true);
+      // Simplify to single item to ensure Total Price (with discount) is exact and avoid integer/decimal issues
+      const items = [{
+        title: "Mercado a la Medida (Resumen de Compra)",
+        quantity: 1,
+        unit_price: Math.round(totalPrice), // Ensure integer for COP
+        currency_id: 'COP'
+      }];
+
+      // Sanitize phone number to keep only digits
+      const cleanPhone = phoneNumber.replace(/\D/g, '');
+
+      const response = await fetch('/api/create-preference', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          items: items,
+          payer: {
+            name: "Cliente Mercado a la Medida",
+            phone: { number: cleanPhone }
+          },
+          totalAmount: totalPrice
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Error del servidor (${response.status}): ${errorText}`);
+      }
+
+      const data = await response.json();
+      if (data.error) {
+        throw new Error(`Error Mercado Pago: ${data.error}`);
+      }
+
+      if (data.init_point) {
+        // Direct redirect to Mercado Pago
+        window.location.href = data.init_point;
+      }
+    } catch (error) {
+      console.error(error);
+      alert(`❌ Error al iniciar el pago: ${String(error)}`);
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   const maxCategoryCount = useMemo(() => {
@@ -282,7 +396,7 @@ const App: React.FC = () => {
         return;
       }
       setIsProcessing(true);
-      const result = await optimizePickingList(cart, RECIPES, INGREDIENTS, persons);
+      const result = await optimizePickingList(cart, RECIPES, ingredients, persons);
       setPickingList(result.picking);
       // Reset overrides when cart or persons change significantly
       setPickingOverrides({});
@@ -328,6 +442,40 @@ const App: React.FC = () => {
     setPickingOverrides({});
   };
 
+  // Secret admin trigger using useRef to avoid re-renders
+  const secretClickRef = useRef(0);
+
+  const handleSecretTrigger = () => {
+    secretClickRef.current += 1;
+    if (secretClickRef.current >= 5) {
+      // Use setTimeout to allow the UI to register the click event before blocking with prompt
+      setTimeout(() => {
+        const password = prompt("Ingrese clave administrativa:");
+        const validPassword = (import.meta as any).env.VITE_ADMIN_PASSWORD || "admin123";
+
+        if (password === validPassword) {
+          setIsAdmin(true);
+        }
+        secretClickRef.current = 0;
+      }, 50);
+    }
+  };
+
+
+  if (isAdmin) {
+    return (
+      <AdminPanel
+        ingredients={ingredients}
+        recipes={recipes}
+        onUpdateIngredient={handleUpdateIngredient}
+        onUpdateRecipe={handleUpdateRecipe}
+        onAddRecipe={handleAddRecipe}
+        onDeleteRecipe={handleDeleteRecipe}
+        onExit={() => setIsAdmin(false)}
+      />
+    );
+  }
+
   if (showLanding) {
     return (
       <div className="min-h-screen bg-white">
@@ -337,6 +485,12 @@ const App: React.FC = () => {
               src="/desayuno-colombiano-hero.png"
               className="w-full h-full object-cover"
               alt="Desayuno colombiano tradicional"
+            />
+            {/* AREA SECRETA DERECHA */}
+            <div
+              onClick={handleSecretTrigger}
+              className="absolute top-0 right-0 w-1/4 h-full z-50 cursor-default"
+              title=""
             />
             <div className="absolute inset-0 bg-gradient-to-r from-black/80 via-black/40 to-transparent" />
           </div>
@@ -1008,11 +1162,12 @@ const App: React.FC = () => {
                     <span className="text-3xl font-black text-emerald-900">${totalPrice.toLocaleString()}</span>
                   </div>
                   <button
-                    onClick={processOrder}
-                    disabled={!isCheckoutValid || !locationGranted}
-                    className={`px-10 py-4 rounded-2xl font-black text-xs uppercase tracking-widest transition-all ${isCheckoutValid && locationGranted ? 'bg-emerald-600 text-white shadow-xl hover:bg-emerald-700' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}
+                    onClick={createPreference}
+                    disabled={!isCheckoutValid || !locationGranted || isProcessing}
+                    className={`px-12 py-4 rounded-2xl font-black text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2 ${isCheckoutValid && locationGranted && !isProcessing ? 'bg-gray-900 text-white shadow-xl hover:bg-black hover:scale-[1.02]' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}
                   >
-                    Confirmar Mercado
+                    {isProcessing ? 'Procesando...' : 'PAGAR'}
+                    {!isProcessing && <ArrowRight className="w-4 h-4" />}
                   </button>
                 </div>
               </div>
