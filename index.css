@@ -1,0 +1,5 @@
+/* Archivo de estilos base para evitar errores de carga */
+body {
+  margin: 0;
+  font-family: 'Inter', sans-serif;
+}

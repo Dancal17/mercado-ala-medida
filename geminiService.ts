@@ -3,11 +3,19 @@ import { GoogleGenAI } from "@google/genai";
 import { CartItem, PickingItem, Ingredient, Recipe, PersonConfig, AgeRange } from "./types";
 
 const getApiKey = () => {
-  return import.meta.env.VITE_GEMINI_API_KEY || (typeof process !== 'undefined' ? process.env?.VITE_GEMINI_API_KEY : '') || '';
+  return (import.meta as any).env?.VITE_GEMINI_API_KEY || '';
 };
 
 const apiKey = getApiKey();
-const ai = apiKey ? new GoogleGenAI(apiKey) : null;
+let ai: GoogleGenAI | null = null;
+
+if (apiKey && apiKey !== 'PLACEHOLDER_API_KEY') {
+  try {
+    ai = new GoogleGenAI(apiKey);
+  } catch (e) {
+    console.warn("Error al inicializar GoogleGenAI:", e);
+  }
+}
 
 const AGE_MULTIPLIERS: Record<AgeRange, number> = {
   '1-3': 0.27,
@@ -84,10 +92,10 @@ export async function optimizePickingList(
       Genera 3 consejos breves sobre cómo organizar estos ingredientes crudos para asegurar que los niños reciban sus porciones adecuadas según su edad en Madrid, Cundinamarca.
     `;
 
-    const model = ai.getGenerativeModel({ model: "gemini-1.5-flash" });
-    const response = await model.generateContent(prompt);
-    const result = await response.response;
-    const text = result.text();
+    const model = (ai as any).getGenerativeModel({ model: "gemini-1.5-flash" });
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    const text = response.text();
 
     const suggestions = text.split('\n').filter(s => s.trim().length > 0).slice(0, 3) || [];
     return { picking: pickingList, suggestions };
