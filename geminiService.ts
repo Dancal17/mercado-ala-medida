@@ -2,7 +2,12 @@
 import { GoogleGenAI } from "@google/genai";
 import { CartItem, PickingItem, Ingredient, Recipe, PersonConfig, AgeRange } from "./types";
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+const getApiKey = () => {
+  return import.meta.env.VITE_GEMINI_API_KEY || (typeof process !== 'undefined' ? process.env?.VITE_GEMINI_API_KEY : '') || '';
+};
+
+const apiKey = getApiKey();
+const ai = apiKey ? new GoogleGenAI(apiKey) : null;
 
 const AGE_MULTIPLIERS: Record<AgeRange, number> = {
   '1-3': 0.27,
@@ -66,6 +71,10 @@ export async function optimizePickingList(
     };
   });
 
+  if (!ai) {
+    return { picking: pickingList, suggestions: ["Ajusta las proteínas según el crecimiento de los menores.", "Usa recipientes medidores para las porciones infantiles."] };
+  }
+
   try {
     const prompt = `
       Actúa como nutricionista experto en FoodTech.
@@ -75,13 +84,12 @@ export async function optimizePickingList(
       Genera 3 consejos breves sobre cómo organizar estos ingredientes crudos para asegurar que los niños reciban sus porciones adecuadas según su edad en Madrid, Cundinamarca.
     `;
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
-      contents: prompt,
-      config: { maxOutputTokens: 200 },
-    });
+    const model = ai.getGenerativeModel({ model: "gemini-1.5-flash" });
+    const response = await model.generateContent(prompt);
+    const result = await response.response;
+    const text = result.text();
 
-    const suggestions = response.text?.split('\n').filter(s => s.trim().length > 0).slice(0, 3) || [];
+    const suggestions = text.split('\n').filter(s => s.trim().length > 0).slice(0, 3) || [];
     return { picking: pickingList, suggestions };
   } catch (error) {
     return { picking: pickingList, suggestions: ["Ajusta las proteínas según el crecimiento de los menores.", "Usa recipientes medidores para las porciones infantiles."] };
