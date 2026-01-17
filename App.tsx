@@ -224,7 +224,8 @@ const App: React.FC = () => {
       // Sanitize phone number to keep only digits
       const cleanPhone = phoneNumber.replace(/\D/g, '');
 
-      const response = await fetch('/api/create-preference', {
+      // URL del Backend Serverless en AWS Lambda
+      const response = await fetch('https://7bex66b7xivkbcimalulthsjxq0wcdii.lambda-url.us-east-2.on.aws/', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -238,6 +239,13 @@ const App: React.FC = () => {
           totalAmount: totalPrice
         }),
       });
+
+      // Validar que la respuesta sea JSON (si no, es error crítico de Lambda o Gateway)
+      const contentType = response.headers.get("content-type");
+      if (!contentType || !contentType.includes("application/json")) {
+        const text = await response.text();
+        throw new Error(`Error de comunicación con Backend: ${text.slice(0, 100)}`);
+      }
 
       if (!response.ok) {
         const errorText = await response.text();

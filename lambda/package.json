@@ -1,0 +1,10 @@
+{
+    "name": "mercado-medida-backend",
+    "version": "1.0.0",
+    "description": "Backend Serverless para Mercado Pago",
+    "main": "index.js",
+    "type": "module",
+    "dependencies": {
+        "mercadopago": "^2.0.0"
+    }
+}
